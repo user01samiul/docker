@@ -762,7 +762,7 @@ Internet
 | Install MongoDB | `apt install mongod`, configure, enable service | `image: mongo:7` (container) |
 | Process manager | pm2, systemd | `restart: unless-stopped` (Docker handles it) |
 
-> **The whole point**: With Docker you install ONE thing on the VPS (Docker), and everything else runs in containers. No version conflicts, no `apt install` mess, no "works on my machine" problems.
+> **The whole point**: You install **only Docker** on the VPS, and everything else runs in containers. Nginx, Certbot, MongoDB, Node.js - all containers. No `apt install`, no version management, no configuring system services. You just put `docker-compose.yml` + `nginx.conf` + `.env` on the VPS, run `docker compose up -d`, and everything starts.
 
 ---
 
