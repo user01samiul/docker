@@ -764,6 +764,23 @@ Internet
 
 > **The whole point**: You install **only Docker** on the VPS, and everything else runs in containers. Nginx, Certbot, MongoDB, Node.js - all containers. No `apt install`, no version management, no configuring system services. You just put `docker-compose.yml` + `nginx.conf` + `.env` on the VPS, run `docker compose up -d`, and everything starts.
 
+### Where Do Images Come From?
+
+`image: nginx:alpine` doesn't install Nginx on your VPS. It **pulls** a pre-built image from **Docker Hub** (hub.docker.com) - like npm but for Docker images.
+
+```
+nginx:alpine       → built & maintained by the Nginx team
+mongo:7            → built & maintained by the MongoDB team
+node:22            → built & maintained by the Node.js team
+certbot/certbot    → built & maintained by the Let's Encrypt team
+postgres:16        → built & maintained by the PostgreSQL team
+redis:7            → built & maintained by the Redis team
+```
+
+These are **official images** - the teams behind each project build and publish them on Docker Hub. You just pull and run, no installing or compiling anything.
+
+> **The `nginx.conf` file is NOT installing Nginx.** It's just a text config file you pass into the Nginx container via a volume mount. The actual Nginx software lives inside the `nginx:alpine` image. Same idea as `.env` - just configuration, not software.
+
 ---
 
 ## Quick Tips
