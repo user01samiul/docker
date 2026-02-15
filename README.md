@@ -190,22 +190,59 @@ node_modules
 
 ## Volumes (Persistent Data)
 
-Containers are ephemeral - when removed, their data is gone. Volumes persist data.
+Containers are ephemeral - when you remove a container, all data inside it is gone. Volumes solve this by storing data outside the container.
+
+### Why Use Volumes?
+
+| Problem                                         | How Volumes Solve It                              |
+| ------------------------------------------------ | ------------------------------------------------- |
+| Container removed = data lost                    | Volume data persists even after container is deleted |
+| Multiple containers need the same data           | Mount the same volume into multiple containers     |
+| Database in a container (Postgres, MongoDB, etc.) | Store DB files on a volume so data survives restarts |
+| Share uploaded files between app containers       | All containers read/write to the same volume       |
+| Hot-reload code during development               | Bind mount your source code into the container     |
+
+### Named Volumes vs Bind Mounts
 
 ```bash
-# Named volume (Docker manages the location)
+# NAMED VOLUME - Docker manages where it's stored on your disk
+# Best for: databases, shared data between containers, production
 docker volume create mydata
 docker run -v mydata:/app/data <image>
 
-# Bind mount (you choose the host path)
-docker run -v $(pwd)/data:/app/data <image>
-
-# List volumes
-docker volume ls
-
-# Remove a volume
-docker volume rm mydata
+# BIND MOUNT - YOU choose the host path
+# Best for: development (live code reload), config files
+docker run -v $(pwd)/src:/app/src <image>
 ```
+
+### Common Use Cases
+
+```bash
+# 1. Database that survives container restarts
+docker run -d -v pgdata:/var/lib/postgresql/data postgres:16
+
+# 2. Share uploads folder between multiple app containers
+docker run -d -v uploads:/app/uploads --name app1 myapp
+docker run -d -v uploads:/app/uploads --name app2 myapp
+#    Both app1 and app2 read/write the same uploads folder
+
+# 3. Live code reload during development (bind mount)
+docker run -v $(pwd):/app -p 3000:3000 myapp npm run dev
+#    Edit code on your machine → changes reflect inside container instantly
+
+# 4. Persist logs
+docker run -v applogs:/app/logs myapp
+```
+
+### Volume Commands
+
+| Command                              | Description                          |
+| ------------------------------------ | ------------------------------------ |
+| `docker volume create mydata`        | Create a named volume                |
+| `docker volume ls`                   | List all volumes                     |
+| `docker volume inspect mydata`       | Show volume details (mount path etc) |
+| `docker volume rm mydata`            | Remove a volume                      |
+| `docker volume prune`                | Remove all unused volumes            |
 
 ---
 
