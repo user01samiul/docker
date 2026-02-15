@@ -567,6 +567,203 @@ docker cp mongo:/data/backup ./backup
 docker run --rm -v mongo-data:/data -v $(pwd):/backup alpine tar czf /backup/mongo-backup.tar.gz /data
 ```
 
+### Domain + SSL Setup (Step by Step)
+
+Without Docker you'd `apt install nginx`, edit `/etc/nginx/sites-available/...`, `apt install certbot`, etc. With Docker, everything runs in containers - you install NOTHING on the VPS except Docker.
+
+#### Step 1: Point your domain to the VPS
+
+Go to your domain registrar (Namecheap, GoDaddy, Cloudflare, etc.) and add a DNS record:
+
+```
+Type: A
+Name: @              (or "yourdomain.com")
+Value: 123.45.67.89  (your VPS IP address)
+TTL: Auto
+```
+
+For `www` subdomain, add another:
+
+```
+Type: A
+Name: www
+Value: 123.45.67.89
+TTL: Auto
+```
+
+Wait a few minutes for DNS to propagate.
+
+#### Step 2: Create the Nginx config file
+
+On the VPS, create `nginx.conf` in your project folder:
+
+```
+/home/sami/myapp/
+├── docker-compose.yml
+├── .env
+└── nginx.conf            ← create this
+```
+
+```nginx
+server {
+    listen 80;
+    server_name yourdomain.com www.yourdomain.com;
+
+    # Certbot challenge (needed for SSL certificate)
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # Redirect all HTTP to HTTPS
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name yourdomain.com www.yourdomain.com;
+
+    ssl_certificate     /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;
+
+    location / {
+        proxy_pass http://web:3000;        # "web" = the service name in docker-compose
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+> **What this does**: Port 80 (HTTP) redirects to port 443 (HTTPS). Port 443 decrypts SSL and forwards traffic to your Next.js app at `web:3000`.
+
+#### Step 3: Production docker-compose.yml with SSL
+
+```yaml
+services:
+  web:
+    image: sami/myapp:1.0
+    env_file:
+      - .env
+    depends_on:
+      - mongo
+    restart: unless-stopped
+    # NO ports - nginx handles public access
+
+  mongo:
+    image: mongo:7
+    volumes:
+      - mongo-data:/data/db
+    restart: unless-stopped
+    # NO ports - only web needs access
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro   # nginx config
+      - certbot-www:/var/www/certbot:ro                   # certbot challenge files
+      - certbot-certs:/etc/letsencrypt:ro                 # SSL certificates
+    depends_on:
+      - web
+    restart: unless-stopped
+
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - certbot-www:/var/www/certbot          # writes challenge files here
+      - certbot-certs:/etc/letsencrypt        # writes certificates here
+
+volumes:
+  mongo-data:
+  certbot-www:
+  certbot-certs:
+```
+
+> **Notice**: `web` and `mongo` have NO ports exposed. Only `nginx` is exposed to the internet (80 + 443). Everything else is internal.
+
+#### Step 4: Get the SSL certificate
+
+First start nginx without SSL (comment out the `server { listen 443 ... }` block in nginx.conf temporarily, and remove the redirect so port 80 serves normally):
+
+```bash
+# Start services
+docker compose up -d nginx
+
+# Run certbot to get certificate
+docker compose run --rm certbot certonly \
+  --webroot \
+  --webroot-path /var/www/certbot \
+  -d yourdomain.com \
+  -d www.yourdomain.com \
+  --email your@email.com \
+  --agree-tos
+
+# Now restore the full nginx.conf (with the 443 block and redirect)
+# Restart everything
+docker compose up -d
+```
+
+#### Step 5: Auto-renew SSL (certificates expire every 90 days)
+
+Add a cron job on the VPS:
+
+```bash
+# Open crontab
+crontab -e
+
+# Add this line (renews every day at 3am, restarts nginx if renewed)
+0 3 * * * cd /home/sami/myapp && docker compose run --rm certbot renew && docker compose exec nginx nginx -s reload
+```
+
+#### The full picture
+
+```
+Internet
+    │
+    ↓
+┌─────────────────────────────────────────────────────┐
+│  VPS                                                 │
+│                                                      │
+│  :80 /:443                                           │
+│  ┌───────────┐    ┌──────────┐    ┌──────────┐      │
+│  │   nginx   │───→│   web    │───→│  mongo   │      │
+│  │(port 80,  │    │(Next.js) │    │(MongoDB) │      │
+│  │ 443)      │    │ internal │    │ internal │      │
+│  └───────────┘    └──────────┘    └──────────┘      │
+│       │                                │             │
+│  ┌────┴─────┐                   ┌──────┴─────┐      │
+│  │ certbot- │                   │ mongo-data │      │
+│  │ certs    │                   │  (volume)  │      │
+│  │ (volume) │                   └────────────┘      │
+│  └──────────┘                                        │
+│                                                      │
+│  user → https://yourdomain.com → nginx → web:3000   │
+└─────────────────────────────────────────────────────┘
+```
+
+#### Without Docker vs With Docker
+
+| | Without Docker (traditional) | With Docker |
+|-|------------------------------|-------------|
+| Install Nginx | `apt install nginx` | `image: nginx:alpine` (container) |
+| Configure Nginx | Edit `/etc/nginx/sites-available/...` | Mount `nginx.conf` as volume |
+| Install Certbot | `apt install certbot python3-certbot-nginx` | `image: certbot/certbot` (container) |
+| Get SSL cert | `certbot --nginx -d yourdomain.com` | `docker compose run certbot certonly ...` |
+| Auto-renew | `certbot renew` (systemd timer) | Cron job with `docker compose run certbot renew` |
+| Install Node.js | `apt install nodejs npm`, nvm, etc. | Already in the image |
+| Install MongoDB | `apt install mongod`, configure, enable service | `image: mongo:7` (container) |
+| Process manager | pm2, systemd | `restart: unless-stopped` (Docker handles it) |
+
+> **The whole point**: With Docker you install ONE thing on the VPS (Docker), and everything else runs in containers. No version conflicts, no `apt install` mess, no "works on my machine" problems.
+
 ---
 
 ## Quick Tips
