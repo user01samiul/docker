@@ -205,15 +205,23 @@ Containers are ephemeral - when you remove a container, all data inside it is go
 ### Named Volumes vs Bind Mounts
 
 ```bash
-# NAMED VOLUME - Docker manages where it's stored on your disk
-# Best for: databases, shared data between containers, production
-docker volume create mydata
-docker run -v mydata:/app/data <image>
+# -v shorthand (shorter, older syntax)
+docker run -v mydata:/app/data <image>              # named volume
+docker run -v $(pwd)/src:/app/src <image>            # bind mount
 
-# BIND MOUNT - YOU choose the host path
-# Best for: development (live code reload), config files
-docker run -v $(pwd)/src:/app/src <image>
+# --mount syntax (explicit, recommended by Docker)
+docker run --mount source=mydata,target=/app/data <image>                          # named volume
+docker run --mount type=bind,source=$(pwd)/src,target=/app/src <image>             # bind mount
+docker run --mount source=mydata,target=/app/data,readonly <image>                 # read-only volume
 ```
+
+| | `-v` shorthand | `--mount` syntax |
+|-|----------------|------------------|
+| Syntax | `-v name:/path` | `--mount source=name,target=/path` |
+| Creates volume if missing | Yes (silently) | No (throws error) |
+| Best for | Quick commands, dev | Production, clarity |
+
+> **Tip**: `--mount` is more explicit and catches typos (errors if volume doesn't exist instead of silently creating one). Docker recommends `--mount` for production.
 
 ### Common Use Cases
 
