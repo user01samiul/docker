@@ -418,6 +418,157 @@ docker run -p 3000:3000 <image>
 
 ---
 
+## Production Deployment (VPS)
+
+### The Flow
+
+```
+Your Machine (development)
+    │
+    │  1. Write code
+    │  2. Build image → docker build -t sami/myapp:1.0 .
+    │  3. Push image  → docker push sami/myapp:1.0
+    ↓
+Docker Hub (or any registry)
+    │
+    │  Stores your image (like GitHub but for Docker images)
+    ↓
+VPS (production server)
+    │  4. Pull image  → docker pull sami/myapp:1.0
+    │  5. Run it      → docker compose up -d
+    ↓
+Users access your app
+```
+
+### What Goes on the VPS
+
+You do NOT put your source code on the VPS. You only need these files:
+
+```
+/home/sami/myapp/
+├── docker-compose.yml       ← defines your services
+└── .env                     ← secrets (DB passwords, API keys)
+```
+
+No Dockerfile, no source code, no `node_modules`. The image has everything baked in.
+
+### Production docker-compose.yml
+
+```yaml
+services:
+  web:
+    image: sami/myapp:1.0          # Pull from registry (NOT build: .)
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env                       # Load secrets from file
+    depends_on:
+      - mongo
+    restart: unless-stopped
+
+  mongo:
+    image: mongo:7
+    volumes:
+      - mongo-data:/data/db        # CRITICAL - persist database
+    # NO ports exposed - only "web" needs access, not the public internet
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"                    # HTTP
+      - "443:443"                  # HTTPS
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro    # your nginx config
+      - certs:/etc/letsencrypt                    # SSL certificates
+    depends_on:
+      - web
+    restart: unless-stopped
+
+volumes:
+  mongo-data:                      # Database files
+  certs:                           # SSL certificates
+```
+
+### Development vs Production Differences
+
+| | Development | Production |
+|-|------------|------------|
+| App image | `build: .` (from Dockerfile) | `image: sami/myapp:1.0` (from registry) |
+| Mongo ports | `"27017:27017"` (access from host tools) | **Not exposed** (only web needs it) |
+| Nginx | Not needed | Reverse proxy + HTTPS |
+| Secrets | Hardcoded in yml | `.env` file (never commit this) |
+| Restart | Optional | `unless-stopped` (always) |
+
+### Why Nginx?
+
+```
+Without Nginx:
+  user → http://your-ip:3000          (ugly, no SSL, no HTTPS)
+
+With Nginx:
+  user → https://yourdomain.com:443 → nginx → web:3000
+         (clean URL, HTTPS, secure)
+```
+
+Nginx sits in front of your app as a reverse proxy and handles:
+- **HTTPS/SSL** - encrypts traffic
+- **Domain name** - `yourdomain.com` instead of `ip:3000`
+- **Load balancing** - if you scale to multiple app containers
+
+### What Lives Where on the VPS
+
+```
+IMAGES (read-only, replaceable, no data)
+├── sami/myapp:1.0    ← your app code (from Hub)
+├── mongo:7           ← database engine (from Hub)
+└── nginx:alpine      ← web server (from Hub)
+
+VOLUMES (persistent, YOUR data, BACK THESE UP)
+├── mongo-data        ← database files
+└── certs             ← SSL certificates
+
+CONTAINERS (running instances, disposable)
+├── web               ← from sami/myapp:1.0
+├── mongo             ← from mongo:7
+└── nginx             ← from nginx:alpine
+```
+
+**Rule of thumb:**
+- **Images** = code/software. Replaceable. Rebuilt and re-pulled on every deploy.
+- **Volumes** = data. Irreplaceable. Back them up. Only for things that CHANGE at runtime (database, user uploads, SSL certs).
+- **Containers** = disposable. Kill them, recreate them anytime. Data is safe in volumes.
+
+### Deploy Commands
+
+```bash
+# ON YOUR MACHINE - build and push
+docker build -t sami/myapp:1.1 .
+docker push sami/myapp:1.1
+
+# ON THE VPS - pull and restart
+ssh sami@your-vps-ip
+cd ~/myapp
+# Update image version in docker-compose.yml to 1.1
+docker compose pull
+docker compose up -d
+```
+
+### Backing Up (Only Volumes Matter)
+
+Images can be re-pulled, containers can be recreated. Only back up volumes.
+
+```bash
+# Back up MongoDB data
+docker compose exec mongo mongodump --out /data/backup
+docker cp mongo:/data/backup ./backup
+
+# Or back up the volume directly
+docker run --rm -v mongo-data:/data -v $(pwd):/backup alpine tar czf /backup/mongo-backup.tar.gz /data
+```
+
+---
+
 ## Quick Tips
 
 - **EXPOSE doesn't publish ports** - it's just documentation. You still need `-p` at runtime.
