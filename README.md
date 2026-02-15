@@ -256,44 +256,78 @@ docker run -v applogs:/app/logs myapp
 
 ## Docker Compose (Multi-Container Apps)
 
-For apps with multiple services (e.g., Node.js + database). Create a `docker-compose.yml`:
+### One Process Per Container
+
+Keep each container doing ONE thing. If your app needs multiple processes (Node.js app + database), run them as separate containers and let them talk over a network. This keeps containers:
+- **Easier to scale** - scale the app without duplicating the database
+- **Easier to update** - update Node.js without touching MongoDB
+- **Easier to debug** - each container has its own logs
+- **More reliable** - one crash doesn't take down everything
+
+Docker Compose manages multiple containers as a single app. One command to start everything.
+
+### Our docker-compose.yml (explained)
 
 ```yaml
 services:
-  app:
-    build: .
+  web:                              # Service 1: our Next.js app
+    build: .                        # Build from Dockerfile in current directory
     ports:
-      - "3000:3000"
+      - "3000:3000"                 # Map host port to container port
     environment:
-      - DATABASE_URL=postgres://user:pass@db:5432/mydb
+      - MONGO_URL=mongodb://mongo:27017/mydb   # "mongo" = the service name below (Docker DNS)
     depends_on:
-      - db
+      - mongo                       # Start mongo before web
+    restart: unless-stopped         # Auto-restart if it crashes
 
-  db:
-    image: postgres:16
-    environment:
-      - POSTGRES_USER=user
-      - POSTGRES_PASSWORD=pass
-      - POSTGRES_DB=mydb
+  mongo:                            # Service 2: MongoDB database
+    image: mongo:7                  # Use official MongoDB 7 image from Docker Hub
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - mongo-data:/data/db         # Persist database files to a named volume
     ports:
-      - "5432:5432"
+      - "27017:27017"               # Expose MongoDB port to host (for local tools)
+    restart: unless-stopped
 
 volumes:
-  pgdata:
+  mongo-data:                       # Declare the named volume (Docker manages it)
 ```
 
-| Command                        | Description                                  |
-| ------------------------------ | -------------------------------------------- |
-| `docker compose up`            | Start all services (foreground)               |
-| `docker compose up -d`         | Start all services (background)               |
-| `docker compose up --build`    | Rebuild images and start                      |
-| `docker compose down`          | Stop and remove all containers                |
-| `docker compose down -v`       | Stop, remove containers AND volumes           |
-| `docker compose logs -f`       | Follow logs for all services                  |
-| `docker compose ps`            | List running services                         |
-| `docker compose exec app sh`   | Shell into a specific service                 |
+> **How do containers find each other?** Docker Compose creates a network automatically. Each service can reach others by service name. So `web` connects to MongoDB at `mongodb://mongo:27017` - "mongo" is the service name, Docker resolves it to the container's IP.
+
+### docker-compose.yml Common Options
+
+| Option           | Purpose                                      | Example                              |
+| ---------------- | -------------------------------------------- | ------------------------------------ |
+| `build`          | Build image from a Dockerfile                | `build: .`                           |
+| `image`          | Use a pre-built image                        | `image: mongo:7`                     |
+| `ports`          | Map host:container ports                     | `"3000:3000"`                        |
+| `environment`    | Set env vars                                 | `MONGO_URL=mongodb://mongo:27017`    |
+| `env_file`       | Load env vars from a file                    | `env_file: .env`                     |
+| `volumes`        | Mount volumes or bind mounts                 | `mongo-data:/data/db`                |
+| `depends_on`     | Start dependencies first                     | `depends_on: [mongo]`                |
+| `restart`        | Restart policy                               | `unless-stopped`, `always`, `no`     |
+| `command`        | Override the default CMD                     | `command: npm run dev`               |
+| `container_name` | Set a custom container name                  | `container_name: my-web-app`         |
+
+### Compose Commands
+
+| Command                           | Description                                  |
+| --------------------------------- | -------------------------------------------- |
+| `docker compose up`               | Start all services (foreground)               |
+| `docker compose up -d`            | Start all services (background)               |
+| `docker compose up --build`       | Rebuild images and start                      |
+| `docker compose up -d --build`    | Rebuild + background (most common)            |
+| `docker compose down`             | Stop and remove all containers + network      |
+| `docker compose down -v`          | Same + remove volumes (wipes database data!)  |
+| `docker compose logs -f`          | Follow logs for all services                  |
+| `docker compose logs -f web`      | Follow logs for just one service              |
+| `docker compose ps`               | List running services                         |
+| `docker compose exec web sh`      | Shell into a specific service                 |
+| `docker compose stop`             | Stop services (without removing)              |
+| `docker compose start`            | Start previously stopped services             |
+| `docker compose restart`          | Restart all services                          |
+| `docker compose pull`             | Pull latest images for all services           |
+| `docker compose config`           | Validate and show the resolved compose file   |
 
 ---
 
